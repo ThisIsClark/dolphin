@@ -13,26 +13,23 @@
 # limitations under the License.
 
 import copy
+
 import six
-from six.moves import http_client
-import webob
+from oslo_log import log
 from webob import exc
 
-from oslo_log import log
-
-from dolphin.api.common import wsgi
-from dolphin.api.schemas import storages as schema_storages
-from dolphin.api import validation, api_utils
-from dolphin.api.views import storages as storage_view
 from dolphin import context
 from dolphin import coordination
-from dolphin import cryptor
 from dolphin import db
-from dolphin.drivers import api as driverapi
 from dolphin import exception
+from dolphin.api import api_utils
+from dolphin.api import validation
+from dolphin.api.common import wsgi
+from dolphin.api.schemas import storages as schema_storages
+from dolphin.api.views import storages as storage_view
+from dolphin.drivers import api as driverapi
 from dolphin.i18n import _
 from dolphin.task_manager import rpcapi as task_rpcapi
-from dolphin import utils
 from dolphin.task_manager.tasks import task
 
 LOG = log.getLogger(__name__)
@@ -98,35 +95,41 @@ class StorageController(wsgi.Controller):
         ctxt = req.environ['dolphin.context']
         access_info_dict = body
 
-        if self._is_registered(ctxt, access_info_dict):
-            msg = _("Storage has been registered.")
+        if self._storage_exist(ctxt, access_info_dict):
+            msg = _("Storage already exists.")
             raise exc.HTTPBadRequest(explanation=msg)
 
         try:
-            storage = self.driver_api.discover_storage(ctxt, access_info_dict)
-            storage = db.storage_create(context, storage)
-
-            # Need to encode the password before saving.
-            access_info_dict['storage_id'] = storage['id']
-            access_info_dict['password'] = cryptor.encode(access_info_dict['password'])
-            db.access_info_create(context, access_info_dict)
+            storage = self.driver_api.discover_storage(ctxt,
+                                                       access_info_dict)
         except (exception.InvalidCredential,
-                exception.StorageDriverNotFound,
+                exception.InvalidRequest,
+                exception.InvalidResults,
                 exception.AccessInfoNotFound,
+                exception.StorageDriverNotFound,
                 exception.StorageNotFound) as e:
-            raise exc.HTTPBadRequest(explanation=e.message)
-        except Exception as e:
-            msg = _('Failed to register storage: {0}'.format(e))
-            LOG.error(msg)
-            raise exc.HTTPBadRequest(explanation=msg)
+            raise exc.HTTPBadRequest(explanation=e.msg)
 
         return storage_view.build_storage(storage)
 
     def update(self, req, id, body):
         return dict(name="Storage 4")
 
+    @wsgi.response(202)
     def delete(self, req, id):
-        return webob.Response(status_int=http_client.ACCEPTED)
+        ctxt = req.environ['dolphin.context']
+        try:
+            storage = db.storage_get(ctxt, id)
+        except exception.StorageNotFound as e:
+            LOG.error(e)
+            raise exc.HTTPBadRequest(explanation=e.msg)
+        else:
+            for subclass in task.StorageResourceTask.__subclasses__():
+                self.task_rpcapi.remove_storage_resource(
+                    ctxt,
+                    storage['id'],
+                    subclass.__module__ + '.' + subclass.__name__)
+            self.task_rpcapi.remove_storage_in_cache(ctxt, storage['id'])
 
     @wsgi.response(202)
     def sync_all(self, req):
@@ -173,19 +176,30 @@ class StorageController(wsgi.Controller):
 
         return
 
-    def _is_registered(self, context, access_info):
+    def _storage_exist(self, context, access_info):
         access_info_dict = copy.deepcopy(access_info)
 
         # Remove unrelated query fields
-        access_info_dict.pop('username', None)
-        access_info_dict.pop('password', None)
-        access_info_dict.pop('vendor', None)
-        access_info_dict.pop('model', None)
+        unrelated_fields = ['username', 'password']
+        for key in unrelated_fields:
+            access_info_dict.pop(key)
 
         # Check if storage is registered
-        if db.access_info_get_all(context,
-                                  filters=access_info_dict):
-            return True
+        access_info_list = db.access_info_get_all(context,
+                                                  filters=access_info_dict)
+        for _access_info in access_info_list:
+            try:
+                storage = db.storage_get(context, _access_info['storage_id'])
+                if storage:
+                    return True
+            except exception.StorageNotFound:
+                # Suppose storage was not saved successfully after access
+                # information was saved in database when registering storage.
+                # Therefore, removing access info if storage doesn't exist to
+                # ensure the database has no residual data.
+                LOG.debug("Remove residual access information.")
+                db.access_info_delete(context, _access_info['storage_id'])
+
         return False
 
 
