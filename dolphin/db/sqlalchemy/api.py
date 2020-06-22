@@ -389,10 +389,11 @@ def volume_update(context, vol_id, values):
         _volume_get(context, vol_id, session).update(values)
     return _volume_get(context, vol_id, session)
 
-
+import threading
 def volumes_update(context, volumes):
     """Update multiple volumes."""
     session = get_session()
+    LOG.info('ly>>>>>session is %s' % session)
     with session.begin():
         for vol in volumes:
             LOG.debug('updating volume {0}:'.format(vol.get('id')))

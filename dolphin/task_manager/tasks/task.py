@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import inspect
-
+import threading
+import psutil
 import decorator
 from oslo_log import log
 
@@ -217,6 +218,7 @@ class StorageVolumeTask(StorageResourceTask):
                                          len(add_list),
                                          len(delete_id_list),
                                          len(update_list)))
+            LOG.info('ly>>>>>[task]cpu is %s' % psutil.cpu_stats().ct)
             if delete_id_list:
                 db.volumes_delete(self.context, delete_id_list)
 
