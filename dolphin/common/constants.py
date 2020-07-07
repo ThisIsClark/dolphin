@@ -71,3 +71,14 @@ class ProvisioningPolicy(object):
     THIN = 'thin'
 
     ALL = (THICK, THIN)
+
+
+# Constants for redis client
+SOCKET_CONNECT_TIMEOUT = 10
+SOCKET_TIMEOUT = 20
+REDIS_TIMEOUT = 100
+REDIS_TASK_TIMEOUT = 100
+REDIS_SLEEP_TIME = 0.001
+REDIS_DEFAULT_IP = '127.0.0.1'
+REDIS_DEFAULT_PORT = 6379
+TRAP_RECEIVER_CLASS = 'dolphin.alert_manager.trap_receiver.TrapReceiver'

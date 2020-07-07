@@ -128,9 +128,9 @@ def volumes_update(context, values):
     return IMPL.volumes_update(context, values)
 
 
-def volumes_delete(context, values):
+def volumes_delete(context, storage_id, values):
     """Delete multiple volumes."""
-    return IMPL.volumes_delete(context, values)
+    return IMPL.volumes_delete(context, storage_id, values)
 
 
 def volume_get(context, volume_id):
@@ -188,9 +188,9 @@ def storage_pools_update(context, storage_pools):
     return IMPL.storage_pools_update(context, storage_pools)
 
 
-def storage_pools_delete(context, storage_pools):
+def storage_pools_delete(context, storage_id, storage_pools):
     """Delete storage_pools."""
-    return IMPL.storage_pools_delete(context, storage_pools)
+    return IMPL.storage_pools_delete(context, storage_id, storage_pools)
 
 
 def storage_pool_get(context, storage_pool_id):

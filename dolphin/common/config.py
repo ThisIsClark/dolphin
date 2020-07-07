@@ -31,8 +31,7 @@ from oslo_config import cfg
 from oslo_log import log
 from oslo_middleware import cors
 from oslo_utils import netutils
-from dolphin.alert_manager import constants
-
+from dolphin.common import constants
 
 CONF = cfg.CONF
 log.register_options(CONF)
@@ -114,3 +113,14 @@ def set_middleware_defaults():
                        'DELETE',
                        'PATCH']
     )
+
+redis_opts = [
+    cfg.StrOpt('db_name', default=''),
+    cfg.StrOpt('user', default=''),
+    cfg.StrOpt('password', secret=True),
+    cfg.StrOpt('redis_ip', default=constants.REDIS_DEFAULT_IP),
+    cfg.IntOpt('redis_port', default=constants.REDIS_DEFAULT_PORT)
+]
+redis_group = cfg.OptGroup('redis')
+CONF.register_group(redis_group)
+CONF.register_opts(redis_opts, group=redis_group)

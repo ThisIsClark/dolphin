@@ -368,17 +368,18 @@ def volumes_create(context, volumes):
     return vol_refs
 
 
-def volumes_delete(context, volumes_id_list):
+def volumes_delete(context, storage_id, volumes_id_list):
     """Delete multiple volumes."""
     session = get_session()
     with session.begin():
         for vol_id in volumes_id_list:
             LOG.debug('deleting volume {0}:'.format(vol_id))
             query = _volume_get_query(context, session)
-            result = query.filter_by(id=vol_id).delete()
+            result = query.filter_by(original_id=vol_id,
+                                     storage_id=storage_id).delete()
 
             if not result:
-                LOG.error(exception.VolumeNotFound(vol_id))
+                LOG.error(exception.VolumeNotFound(volumes_id_list))
     return
 
 
@@ -389,17 +390,16 @@ def volume_update(context, vol_id, values):
         _volume_get(context, vol_id, session).update(values)
     return _volume_get(context, vol_id, session)
 
-import threading
+
 def volumes_update(context, volumes):
     """Update multiple volumes."""
     session = get_session()
-    LOG.info('ly>>>>>session is %s' % session)
     with session.begin():
         for vol in volumes:
-            LOG.debug('updating volume {0}:'.format(vol.get('id')))
+            LOG.debug('updating volume {0}:'.format(vol.get('original_id')))
             query = _volume_get_query(context, session)
-            result = query.filter_by(id=vol.get('id')
-                                     ).update(vol)
+            result = query.filter_by(original_id=vol.get('original_id'),
+                                     storage_id=vol.get('storage_id')).update(vol)
 
             if not result:
                 LOG.error(exception.VolumeNotFound(vol.get('id')))
@@ -494,17 +494,18 @@ def storage_pools_create(context, storage_pools):
     return storage_pool_refs
 
 
-def storage_pools_delete(context, storage_pools_id_list):
+def storage_pools_delete(context, storage_id, storage_pools_id_list):
     """Delete multiple storage_pools with the storage_pools dictionary."""
     session = get_session()
     with session.begin():
-        for storage_pool_id in storage_pools_id_list:
-            LOG.debug('deleting storage_pool {0}:'.format(storage_pool_id))
+        for storage_pools_id in storage_pools_id_list:
+            LOG.debug('deleting storage_pool {0}:'.format(storage_pools_id))
             query = _storage_pool_get_query(context, session)
-            result = query.filter_by(id=storage_pool_id).delete()
+            result = query.filter_by(original_id=storage_pools_id,
+                                     storage_id=storage_id).delete()
 
             if not result:
-                LOG.error(exception.StoragePoolNotFound(storage_pool_id))
+                LOG.error(exception.StoragePoolNotFound(storage_pools_id))
 
     return
 
@@ -534,7 +535,8 @@ def storage_pools_update(context, storage_pools):
             LOG.debug('updating storage_pool {0}:'.format(
                 storage_pool.get('id')))
             query = _storage_pool_get_query(context, session)
-            result = query.filter_by(id=storage_pool.get('id')
+            result = query.filter_by(original_id=storage_pool.get('original_id'),
+                                     storage_id=storage_pool.get('storage_id')
                                      ).update(storage_pool)
 
             if not result:

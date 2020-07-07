@@ -32,7 +32,33 @@ from dolphin import service
 from dolphin import utils
 from dolphin import version
 from dolphin import db
+from dolphin import redis_utils
+from dolphin import context
 CONF = cfg.CONF
+
+
+def init_redis():
+    client = redis_utils.RedisClient().redis_client
+    ctxt = context.RequestContext()
+    storages = db.storage_get_all(ctxt)
+    for storage in storages:
+        id = storage.id
+        # 从数据库读取pool数据
+        db_pools = db.storage_pool_get_all(ctxt,
+                                           filters={"storage_id": id})
+        # 将pool的original_id写入redis的storage_pool_{storage_id}集合中
+        pool_set_name = "storage_pool_" + id
+        client.delete(pool_set_name)
+        for pool in db_pools:
+            client.sadd(pool_set_name, pool['original_id'])
+        # 从数据库读取volume数据
+        db_volumes = db.volume_get_all(ctxt,
+                                       filters={"storage_id": id})
+        # 将volume的original_id写入redis的volume_{storage_id}集合中
+        volume_set_name = "storage_volume_" + id
+        client.delete(volume_set_name)
+        for volume in db_volumes:
+            client.sadd(volume_set_name, volume['original_id'])
 
 
 def main():
@@ -52,6 +78,7 @@ def main():
     # Launch alert manager service
     alert_manager = service.AlertMngrService()
     launcher.launch_service(alert_manager)
+    init_redis()
 
     launcher.wait()
 
