@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import inspect
 
 import decorator
@@ -23,6 +24,8 @@ from delfin import exception
 from delfin.common import constants
 from delfin.drivers import api as driverapi
 from delfin.i18n import _
+from delfin import redis_utils
+from delfin import utils
 
 LOG = log.getLogger(__name__)
 
@@ -149,6 +152,7 @@ class StorageDeviceTask(StorageResourceTask):
 class StoragePoolTask(StorageResourceTask):
     def __init__(self, context, storage_id):
         super(StoragePoolTask, self).__init__(context, storage_id)
+        self.client = redis_utils.RedisClient().get_redis()
 
     @check_deleted()
     @set_synced_after()
@@ -162,21 +166,69 @@ class StoragePoolTask(StorageResourceTask):
             # collect the storage pools list from driver and database
             storage_pools = self.driver_api.list_storage_pools(self.context,
                                                                self.storage_id)
-            db_pools = db.storage_pool_get_all(self.context,
-                                               filters={"storage_id":
-                                                        self.storage_id})
 
-            add_list, update_list, delete_id_list = self._classify_resources(
-                storage_pools, db_pools, 'native_storage_pool_id'
-            )
-            if delete_id_list:
-                db.storage_pools_delete(self.context, delete_id_list)
+            old_set_name = 'storage_pool_' + self.storage_id
+            """
+            with utils.timer('Pool redis scan'):
+                cur_list_ids = self.client.smembers(old_set_name)
+            cur_list_ids_str = {x.decode('utf-8') for x in cur_list_ids}
+            new_list_ids_str = {pool['native_storage_pool_id'] for pool in storage_pools}
+            update_list_ids_str = cur_list_ids_str.intersection(new_list_ids_str)
+            add_list_ids_str = new_list_ids_str.difference(update_list_ids_str)
+            delete_list_ids_str = cur_list_ids_str.difference(update_list_ids_str)
+            add_list = []
+            update_list = []
+            for pool in storage_pools:
+                if pool['native_storage_pool_id'] in add_list_ids_str:
+                    add_list.append(pool)
+                elif pool['native_storage_pool_id'] in update_list_ids_str:
+                    update_list.append(pool)
+            """
+            old_set_name = 'storage_pool_' + self.storage_id
+            new_set_name = 'storage_pool_' + self.storage_id + "_new"
+            with utils.timer('Pool redis scan'):
+                with self.client.pipeline() as pipe:
+                    for storage_pool in storage_pools:
+                        pipe.sadd(new_set_name, storage_pool['native_storage_pool_id'])
+                    pipe.execute()
+
+            add_ids = self.client.sdiff(new_set_name, old_set_name)
+            del_ids = self.client.sdiff(old_set_name, new_set_name)
+            upd_ids = self.client.sinter(new_set_name, old_set_name)
+            add_ids_str = [x.decode('utf-8') for x in add_ids]
+            del_ids_str = [x.decode('utf-8') for x in del_ids]
+            upd_ids_str = [x.decode('utf-8') for x in upd_ids]
+            add_list = []
+            update_list = []
+            for pool in storage_pools:
+                if pool['native_storage_pool_id'] in add_ids_str:
+                    add_list.append(pool)
+                elif pool['native_storage_pool_id'] in upd_ids_str:
+                    update_list.append(pool)
+
+            if del_ids_str:
+                db.storage_pools_delete(self.context, self.storage_id, del_ids_str)
 
             if update_list:
                 db.storage_pools_update(self.context, update_list)
 
             if add_list:
                 db.storage_pools_create(self.context, add_list)
+
+            with utils.timer('Pool redis add & remove'):
+                with self.client.pipeline() as pipe:
+                    """
+                    for id in add_list_ids_str:
+                        pipe.sadd(old_set_name, id)
+                    for id in delete_list_ids_str:
+                        pipe.srem(old_set_name, id)
+                    """
+                    if add_ids_str:
+                        pipe.sadd(old_set_name, *add_ids_str)
+                    if del_ids_str:
+                        pipe.srem(old_set_name, *del_ids_str)
+                    pipe.delete(new_set_name)
+                    pipe.execute()
         except AttributeError as e:
             LOG.error(e)
         except Exception as e:
@@ -195,6 +247,7 @@ class StoragePoolTask(StorageResourceTask):
 class StorageVolumeTask(StorageResourceTask):
     def __init__(self, context, storage_id):
         super(StorageVolumeTask, self).__init__(context, storage_id)
+        self.client = redis_utils.RedisClient().get_redis()
 
     @check_deleted()
     @set_synced_after()
@@ -207,26 +260,79 @@ class StorageVolumeTask(StorageResourceTask):
             # collect the volumes list from driver and database
             storage_volumes = self.driver_api.list_volumes(self.context,
                                                            self.storage_id)
-            db_volumes = db.volume_get_all(self.context,
-                                           filters={"storage_id":
-                                                    self.storage_id})
+            old_set_name = 'storage_volume_' + self.storage_id
+            """
+            cursor, db_volumes = self.client.sscan(old_set_name, 0, count=20)
+            while cursor != 0:
+                cursor, tmp = self.client.sscan(old_set_name, cursor, count=20)
+                db_volumes.extend(tmp)
+            """
+            """
+            with utils.timer('Volume redis scan'):
+                db_volumes = self.client.smembers(old_set_name)
+            cur_list_ids_str = {x.decode('utf-8') for x in db_volumes}
+            new_list_ids_str = {pool['native_volume_id'] for pool in storage_volumes}
+            update_list_ids_str = cur_list_ids_str.intersection(new_list_ids_str)
+            add_list_ids_str = new_list_ids_str.difference(update_list_ids_str)
+            delete_list_ids_str = cur_list_ids_str.difference(update_list_ids_str)
+            add_list = []
+            update_list = []
+            for volume in storage_volumes:
+                if volume['native_volume_id'] in add_list_ids_str:
+                    add_list.append(volume)
+                elif volume['native_volume_id'] in update_list_ids_str:
+                    update_list.append(volume)
+            """
+            old_set_name = 'storage_volume_' + self.storage_id
+            new_set_name = 'storage_volume_' + self.storage_id + "_new"
+            with utils.timer('Volume redis scan'):
+                with self.client.pipeline() as pipe:
+                    for storage_volume in storage_volumes:
+                        pipe.sadd(new_set_name, storage_volume['native_volume_id'])
+                    pipe.execute()
 
-            add_list, update_list, delete_id_list = self._classify_resources(
-                storage_volumes, db_volumes, 'native_volume_id'
-            )
+            add_ids = self.client.sdiff(new_set_name, old_set_name)
+            del_ids = self.client.sdiff(old_set_name, new_set_name)
+            upd_ids = self.client.sinter(new_set_name, old_set_name)
+            add_ids_str = [x.decode('utf-8') for x in add_ids]
+            del_ids_str = [x.decode('utf-8') for x in del_ids]
+            upd_ids_str = [x.decode('utf-8') for x in upd_ids]
+            add_list = []
+            update_list = []
+            for volume in storage_volumes:
+                if volume['native_volume_id'] in add_ids_str:
+                    add_list.append(volume)
+                elif volume['native_volume_id'] in upd_ids_str:
+                    update_list.append(volume)
             LOG.info('###StorageVolumeTask for {0}:add={1},delete={2},'
                      'update={3}'.format(self.storage_id,
                                          len(add_list),
-                                         len(delete_id_list),
+                                         len(del_ids_str),
                                          len(update_list)))
-            if delete_id_list:
-                db.volumes_delete(self.context, delete_id_list)
+            if del_ids_str:
+                db.volumes_delete(self.context, self.storage_id, del_ids_str)
 
             if update_list:
                 db.volumes_update(self.context, update_list)
 
             if add_list:
                 db.volumes_create(self.context, add_list)
+
+            with utils.timer('Volume redis add & remove'):
+                with self.client.pipeline() as pipe:
+                    """
+                    for id in add_list_ids_str:
+                        pipe.sadd(old_set_name, id)
+                    for id in delete_list_ids_str:
+                        pipe.srem(old_set_name, id)
+                    """
+                    if add_ids_str:
+                        pipe.sadd(old_set_name, *add_ids_str)
+                    if del_ids_str:
+                        pipe.srem(old_set_name, *del_ids_str)
+                    pipe.delete(new_set_name)
+                    pipe.execute()
+
         except AttributeError as e:
             LOG.error(e)
         except Exception as e:

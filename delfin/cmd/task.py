@@ -31,8 +31,35 @@ from delfin.common import config  # noqa
 from delfin import service
 from delfin import utils
 from delfin import version
+from delfin import redis_utils
+from delfin import context
+from delfin import db
 
 CONF = cfg.CONF
+
+
+def init_redis():
+    client = redis_utils.RedisClient().get_redis()
+    ctxt = context.RequestContext()
+    storages = db.storage_get_all(ctxt)
+    for storage in storages:
+        id = storage.id
+        # 从数据库读取pool数据
+        db_pools = db.storage_pool_get_all(ctxt,
+                                           filters={"storage_id": id})
+        # 将pool的original_id写入redis的storage_pool_{storage_id}集合中
+        pool_set_name = "storage_pool_" + id
+        client.delete(pool_set_name)
+        for pool in db_pools:
+            client.sadd(pool_set_name, pool['native_storage_pool_id'])
+        # 从数据库读取volume数据
+        db_volumes = db.volume_get_all(ctxt,
+                                       filters={"storage_id": id})
+        # 将volume的original_id写入redis的volume_{storage_id}集合中
+        volume_set_name = "storage_volume_" + id
+        client.delete(volume_set_name)
+        for volume in db_volumes:
+            client.sadd(volume_set_name, volume['native_volume_id'])
 
 
 def main():
@@ -44,6 +71,7 @@ def main():
 
     task_server = service.Service.create(binary='delfin-task',
                                          coordination=True)
+    init_redis()
     service.serve(task_server)
     service.wait()
 

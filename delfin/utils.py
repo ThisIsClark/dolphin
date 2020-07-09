@@ -19,6 +19,7 @@
 """Utilities and helper functions."""
 
 import contextlib
+import datetime
 import functools
 import inspect
 import os
@@ -606,3 +607,19 @@ class Singleton(type):
                     cls._instances[cls] = super(Singleton,
                                                 cls).__call__(*args, **kwargs)
         return cls._instances[cls]
+
+
+class timer(object):
+    def __init__(self, name):
+        self.name = name
+        self.start = 0
+        self.end = 0
+
+    def __enter__(self):
+        self.start = datetime.datetime.now()
+        return self
+
+    def __exit__(self, exc_type, exc_value, tb):
+        self.end = datetime.datetime.now()
+        interval = (self.end - self.start).seconds
+        LOG.info('%s cost %ds' % (self.name, interval))
